@@ -1,0 +1,12 @@
+logs
+project/project
+project/target
+public/lib
+target
+tmp
+.history
+dist
+.target
+.idea
+*.class
+*.swp
