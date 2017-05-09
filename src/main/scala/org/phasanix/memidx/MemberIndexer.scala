@@ -1,26 +1,32 @@
 package org.phasanix.memidx
 
-trait MemIdx[A, R] {
-  /**
-    * Read a value by index
-    * @param value
-    * @param index
-    * @return
+/**
+  * Macro-generated implementations of `MemberIndexer` will
+  * address no-param methods of instances of `A`, giving
+  * values of type `R`.
+  *
+  * @param names names of mapped methods/properties
+  * @param conversionsTo converter to return type
+  * @tparam A type of target values
+  * @tparam R return type
+  * @tparam C type of converter to return type
+  */
+abstract class MemberIndexer[A, R, C <: ConversionsTo[R]](names: Seq[String], val conversionsTo: C) {
+
+  private val nameToIndex = names.zipWithIndex.toMap
+
+  /***
+    * Convert a member by index
+    * @param value instance of A of which a member is converted
+    * @param index index of member to convert
+    * @return result of conversion.
     */
   def read(value: A, index: Int): R
 
   /**
-    * Names of mapped properties, in declaration order
+    * Number of mapped methods/properties
     */
-  val names: Seq[String]
-
-  /**
-    * Number of mapped properties
-    * @return
-    */
-  def arity: Int
-
-  private lazy val nameToIndex = names.zipWithIndex.toMap
+  def arity: Int = names.length
 
   /**
     * Convert a member by name
@@ -44,59 +50,6 @@ trait MemIdx[A, R] {
 
 }
 
-/**
-  *
-  * @param names list of names of methods of type A
-  * @param conv instance of ConversionsTo[R]
-  * @tparam A type whose properties are read
-  * @tparam R type to which all values are converted
-  * @tparam C type of implementation of ConversionsTo[R]
-  */
-abstract class MemberIndexer[A, R, C <: ConversionsTo[R]](val names: Seq[String], val conv: C) extends MemIdx[A, R] {
-
-  /***
-    * Convert a member by index
-    * @param value instance of A of which a member is converted
-    * @param index index of member to convert
-    * @return result of conversion.
-    */
-  def read(value: A, index: Int): R
-
-  def readAny(value: Any, index: Int): R = read(value.asInstanceOf[A], index)
-
-  /**
-    * Number of methods mapped
-    */
-  def arity: Int = names.length
-}
-
-class MemberIndexerSet[A <: Product, R, C <: ConversionsTo[R]](mis: Seq[MemberIndexer[_, R, C]])
-  extends MemIdx[A, R] {
-
-  private val offsets: Array[(Int, Int, Int)] = {
-    val arr = mis.map(_.arity).foldLeft(0 -> Array.empty[Int]) { (acc, e) =>  (e + acc._1, acc._2 :+ (e + acc._1)) }._2
-    (0 +: arr).sliding(2).toArray.zipWithIndex.map(x => (x._2, x._1(0), x._1(1)))
-  }
-
-  def read(value: A, index: Int): R = {
-    offsets
-      .collect { case (i, from, to) if index >= from && index < to =>
-        mis(i).readAny(value.productElement(i), index - from)
-      }
-      .headOption
-      .getOrElse(throw new Exception(s"index $index out of range"))
-  }
-
-  val names: Seq[String] =
-    for {
-      (mi, i) <- mis.zipWithIndex
-      name <- mi.names
-    } yield {
-      name + "_" + i
-    }
-
-  def arity: Int = mis.map(_.arity).sum
-}
 
 object MemberIndexer {
   import reflect.macros.blackbox
@@ -111,38 +64,67 @@ object MemberIndexer {
   }
 
   class CtorTuple[A, R] {
-    def apply[C <: ConversionsTo[R]](conversionsTo: C): MemberIndexerSet[A, R, C] = macro applyTuple_impl[A, R, C]
+    def apply[C <: ConversionsTo[R]](conversionsTo: C): MemberIndexer[A, R, C] = macro applyTuple_impl[A, R, C]
   }
 
   def applyTuple_impl[A: c.WeakTypeTag, R: c.WeakTypeTag, C: c.WeakTypeTag](c: blackbox.Context)(conversionsTo: c.Expr[C]) = {
 
     import c.universe._
 
-    val mis = weakTypeOf[A].typeArgs.map { t =>
-      create(c)(t, weakTypeOf[R], weakTypeOf[C], conversionsTo)
+    val typeA = weakTypeOf[A]
+    val typeR = weakTypeOf[R]
+    val typeC = weakTypeOf[C]
+
+    val types = typeA.typeArgs
+    val memberLists = types.map(tpe => mappedMembers(c)(tpe))
+    val arities = memberLists.map(_.length)
+    val names = for {
+      (ms, n) <- memberLists.zipWithIndex
+      name <- ms.map(_.name.toString)
+    } yield name + "_" + n
+
+    val offsets: Seq[(Int, Int, Int)] = {
+      val arr = arities.foldLeft(0 -> Array.empty[Int]) { (acc, e) =>  (e + acc._1, acc._2 :+ (e + acc._1)) }._2
+      (0 +: arr).sliding(2).toArray.zipWithIndex.map(x => (x._2, x._1(0), x._1(1)))
     }
 
-    q"new org.phasanix.memidx.MemberIndexerSet(Seq(..$mis))"
+    val mis = types.map(t => create(c)(t, typeR, typeC, conversionsTo))
+
+    val cases = offsets.map { case(index, from, to) =>
+      val mbrName = TermName("_" + (index + 1))
+      cq""" n if n >= $from && n < $to => mis.$mbrName.read(value.$mbrName, n - $from) """
+    } :+ cq""" _ => throw new Exception ("index " + index + " out of range") """
+
+    q"""
+       new org.phasanix.memidx.MemberIndexer[$typeA, $typeR, $typeC]($names, $conversionsTo)  {
+          val mis = (..$mis)
+
+         def read(value: $typeA, index: Int): $typeR = {
+           index match {
+             case ..$cases
+           }
+         }
+       }
+     """
   }
 
   def apply_impl[A: c.WeakTypeTag, R: c.WeakTypeTag, C: c.WeakTypeTag](c: blackbox.Context)(conversionsTo: c.Expr[C]) =
     create[C](c)(c.weakTypeOf[A], c.weakTypeOf[R], c.weakTypeOf[C], conversionsTo)
 
-  private def create[C](c: blackbox.Context)(ta: c.Type, tr: c.Type, tc: c.Type, conversionsTo: c.Expr[C]) = {
-
-    import c.universe._
-
+  // Select members to map
+  private def mappedMembers(c: blackbox.Context)(tpe: c.Type): List[c.universe.MethodSymbol] = {
     val methodsToSkip = Seq("productPrefix", "productArity", "productIterator", "hashCode", "toString").toSet
 
-    val members = ta.decls
-      .collect { case m: MethodSymbol if m.paramLists.flatten.isEmpty => m }
+    val members = tpe.decls
+      .collect { case m if m.isMethod && m.asMethod.paramLists.flatten.isEmpty => m.asMethod }
 
     val isTuple = Seq("_1", "productIterator", "productPrefix")
       .forall(s => members.exists(_.name.toString == s))
 
-    val props =  members.filter { m =>
+
+    members.filter { m =>
       val name = m.name.toString
-      val returnType = m.typeSignatureIn(ta).finalResultType
+      val returnType = m.typeSignatureIn(tpe).finalResultType
 
       if (methodsToSkip.contains(name) || name.startsWith("copy$default$")) {
         false
@@ -151,34 +133,43 @@ object MemberIndexer {
       } else {
         true
       }
-    }.toSeq
+    }.toList
+  }
+
+  private def create[C](c: blackbox.Context)(ta: c.Type, tr: c.Type, tc: c.Type, conversionsTo: c.Expr[C]) = {
+
+    import c.universe._
+
+    val methodsToSkip = Seq("productPrefix", "productArity", "productIterator", "hashCode", "toString").toSet
+
+    val props = mappedMembers(c)(ta)
 
     def accessor(tree: Tree, returnType: Type) = {
 
       // Specific types first
       if (returnType =:= typeOf[Int]) {
-        q"conv.fromInt($tree)"
+        q"conversionsTo.fromInt($tree)"
       } else if (returnType =:= typeOf[Long]) {
-        q"conv.fromLong($tree)"
+        q"conversionsTo.fromLong($tree)"
       } else if (returnType =:= typeOf[Double]) {
-        q"conv.fromDouble($tree)"
+        q"conversionsTo.fromDouble($tree)"
       } else if (returnType =:= typeOf[Float]) {
-        q"conv.fromFloat($tree)"
+        q"conversionsTo.fromFloat($tree)"
       } else if (returnType =:= typeOf[Boolean]) {
-        q"conv.fromBoolean($tree)"
+        q"conversionsTo.fromBoolean($tree)"
       } else if (returnType =:= typeOf[java.time.LocalDate]) {
-        q"conv.fromLocalDate($tree)"
+        q"conversionsTo.fromLocalDate($tree)"
       } else if (returnType =:= typeOf[java.time.LocalDateTime]) {
-        q"conv.fromLocalDateTime($tree)"
+        q"conversionsTo.fromLocalDateTime($tree)"
       } else if (returnType =:= typeOf[java.util.Date]) {
-        q"conv.fromJUDate($tree)"
+        q"conversionsTo.fromJUDate($tree)"
       } else if (returnType =:= typeOf[String]) {
-        q"conv.fromString($tree)"
+        q"conversionsTo.fromString($tree)"
       } else {
         // User-specified type: vs must have an overload for it named "from"
-        c.info(NoPosition, s"mapping to conv.from(value: $returnType) (which must exist)\n" + "" +
+        c.info(NoPosition, s"mapping to conversionsTo.from(value: $returnType) (which must exist)\n" + "" +
           "If compiler warns about structural types, consider named instead of anonymous class", force = true)
-        q"conv.from($tree)"
+        q"conversionsTo.from($tree)"
       }
     }
 
@@ -188,7 +179,7 @@ object MemberIndexer {
       if (returnType <:< typeOf[Option[_]]) {
         val optType = returnType.typeArgs.head
         val acc = accessor(q"e", optType)
-        q"{ x: $ta => x.$nme.map(e => $acc).getOrElse(conv.nilValue) }"
+        q"{ x: $ta => x.$nme.map(e => $acc).getOrElse(conversionsTo.nilValue) }"
       } else {
         val acc = accessor(q"x.$nme", returnType)
         q"{ x: $ta => $acc }"
@@ -197,7 +188,7 @@ object MemberIndexer {
 
     val names = props.map(_.name.toString)
 
-    val arity = snippets.length
+    val arity = names.length
 
     q"""
        new org.phasanix.memidx.MemberIndexer[$ta,$tr,$tc](Seq(..$names), $conversionsTo) {

@@ -86,7 +86,6 @@ class IdxSelSpec extends FlatSpec with Matchers {
   it should "read from set" in {
     val tuple = (Foo(3, 4.5, "six"), Bar(true, "yes"), Baz(false, 4.4f))
     var mit = MemberIndexer.createTuple[(Foo, Bar[Boolean, String], Baz), String](convToStr)
-    println(s"names: ${mit.names.mkString(",")}")
     mit.read(tuple, 1) shouldBe "4.5"
     mit.read(tuple, "calculated_0").get shouldBe "sixsix"
     val members = mit.members(tuple).toSeq
