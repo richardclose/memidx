@@ -2,18 +2,23 @@ package org.phasanix.memidx
 
 /**
   * Macro-generated implementations of `MemberIndexer` will
-  * address no-param methods of instances of `A`, giving
-  * values of type `R`.
+  * address no-param methods of instances of `A` by index,
+  * giving values of type `R`.
   *
-  * @param names names of mapped methods/properties
+  * @param allNames names of mapped methods/properties
   * @param conversionsTo converter to return type
   * @tparam A type of target values
   * @tparam R return type
   * @tparam C type of converter to return type
   */
-abstract class MemberIndexer[A, R, C <: ConversionsTo[R]](names: Seq[String], val conversionsTo: C) {
+abstract class MemberIndexer[A, R, C <: ConversionsTo[R]](val allNames: Seq[String], val conversionsTo: C) {
 
-  private val nameToIndex = names.zipWithIndex.toMap
+  private val nameToIndex = allNames.zipWithIndex.toMap
+  private val overrides = Array.ofDim[A => R](allNames.length)
+  private var offsetsShown: Seq[Int] = Seq.tabulate[Int](allNames.length)(i => i)
+
+  protected def _read(value: A, index: Int): R
+
 
   /***
     * Convert a member by index
@@ -21,12 +26,17 @@ abstract class MemberIndexer[A, R, C <: ConversionsTo[R]](names: Seq[String], va
     * @param index index of member to convert
     * @return result of conversion.
     */
-  def read(value: A, index: Int): R
+  def read(value: A, index: Int): R = {
+    if (overrides(index) == null)
+      _read(value, index)
+    else
+      overrides(index)(value)
+  }
 
   /**
     * Number of mapped methods/properties
     */
-  def arity: Int = names.length
+  def arity: Int = allNames.length
 
   /**
     * Convert a member by name
@@ -39,13 +49,87 @@ abstract class MemberIndexer[A, R, C <: ConversionsTo[R]](names: Seq[String], va
   /** member iterator */
   def members(value: A): Iterator[R] = new Iterator[R] {
     var pos: Int = 0
-    def hasNext: Boolean = pos < arity
+    def hasNext: Boolean = pos < offsetsShown.length
 
     def next(): R = {
-      val ret = read(value, pos)
+      val ret = read(value, offsetsShown(pos))
       pos += 1
       ret
     }
+  }
+
+  /**
+    * Names of mapped properties that are shown
+    * @return
+    */
+  def names: Seq[String] = offsetsShown.map(allNames)
+
+  /**
+    * Install a custom conversion for the method at the given index
+    * @param index index of method to override the conversion for.
+    * @param fn the overriding conversion
+    * @return self
+    */
+  def overrideFor(index: Int, fn: A => R): this.type = {
+    if (index < 0 || index >= overrides.length)
+      throw new Exception(s"index $index not in range 0:${overrides.length-1}")
+    overrides(index) = fn
+    this
+  }
+
+  /**
+    * Install a custom conversion for the method at the given index
+    * @param name name of method to override the conversion for.
+    * @param fn the overriding conversion
+    * @return self
+    */
+  def overrideFor(name: String, fn: A => R): this.type = {
+    val index = nameToIndex.getOrElse(name, throw new Exception(s"name $name not found"))
+    overrideFor(index, fn)
+    this
+  }
+
+  /**
+    * Restrict the members shown, and specify the order, according to the given
+    * list of indices.
+    * @param indices indices
+    * @return self
+    */
+  def showing(indices: Int*): this.type = {
+    if (indices.exists(os => os < 0 || os >= allNames.length))
+      throw new Exception("an offset is out of range")
+    offsetsShown = indices
+    this
+  }
+
+  /**
+    * Restrict the members shown to those with names in the given list
+    * @param names names
+    * @return self
+    */
+  def showingNames(names: String*): this.type = {
+    offsetsShown = names.map(name => nameToIndex.getOrElse(name, throw new Exception(s"name $name not found")))
+    this
+  }
+
+  /**
+    * Hide members with indices in the given list
+    * @param indices indices
+    * @return
+    */
+  def hiding(indices: Int*): this.type = {
+    offsetsShown = offsetsShown.filterNot(os => indices.contains(os))
+    this
+  }
+
+  /**
+    * Hide members with names in the given list
+    * @param names names
+    * @return
+    */
+  def hidingNames(names: String*): this.type = {
+    offsetsShown = offsetsShown.filterNot(os => names.contains(allNames(os)))
+    this
   }
 
 }
@@ -84,6 +168,7 @@ object MemberIndexer {
     } yield name + "_" + n
 
     val offsets: Seq[(Int, Int, Int)] = {
+      // c.info(NoPosition, s"mapping $typeA arities=${arities.mkString(",")}", force = true)
       val arr = arities.foldLeft(0 -> Array.empty[Int]) { (acc, e) =>  (e + acc._1, acc._2 :+ (e + acc._1)) }._2
       (0 +: arr).sliding(2).toArray.zipWithIndex.map(x => (x._2, x._1(0), x._1(1)))
     }
@@ -99,7 +184,7 @@ object MemberIndexer {
        new org.phasanix.memidx.MemberIndexer[$typeA, $typeR, $typeC]($names, $conversionsTo)  {
           val mis = (..$mis)
 
-         def read(value: $typeA, index: Int): $typeR = {
+         def _read(value: $typeA, index: Int): $typeR = {
            index match {
              case ..$cases
            }
@@ -127,6 +212,8 @@ object MemberIndexer {
       val returnType = m.typeSignatureIn(tpe).finalResultType
 
       if (methodsToSkip.contains(name) || name.startsWith("copy$default$")) {
+        false
+      } else if (returnType.typeArgs.nonEmpty) {
         false
       } else if (isTuple) {
         name.startsWith("_")
@@ -166,10 +253,11 @@ object MemberIndexer {
       } else if (returnType =:= typeOf[String]) {
         q"conversionsTo.fromString($tree)"
       } else {
-        // User-specified type: vs must have an overload for it named "from"
-        c.info(NoPosition, s"mapping to conversionsTo.from(value: $returnType) (which must exist)\n" + "" +
+        // User-specified type: vs must have an method for it named "from<typeName>"
+        val nme = TermName(s"from${returnType.typeSymbol.name}")
+        c.info(NoPosition, s"mapping to conversionsTo.$nme(value: $returnType) (which must exist)\n" + "" +
           "If compiler warns about structural types, consider named instead of anonymous class", force = true)
-        q"conversionsTo.from($tree)"
+        q"conversionsTo.$nme($tree)"
       }
     }
 
@@ -193,7 +281,7 @@ object MemberIndexer {
     q"""
        new org.phasanix.memidx.MemberIndexer[$ta,$tr,$tc](Seq(..$names), $conversionsTo) {
           val getters: Seq[($ta => $tr)] = Seq(..$snippets)
-          def read(value: $ta, index: Int): $tr = {
+          protected def _read(value: $ta, index: Int): $tr = {
             if (index < 0 || index > $arity)
               throw new Exception("index " + index + " out of range (" + arity + ")")
             getters(index)(value)

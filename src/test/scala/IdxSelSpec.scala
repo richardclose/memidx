@@ -17,7 +17,7 @@ class ConvToXml(doc: Document) extends BaseConversionsTo[Element](doc.createElem
     elt
   }
 
-  def from(value: Symbol): Element = {
+  def fromSymbol(value: Symbol): Element = {
     val elt = doc.createElement("sym")
     elt.setTextContent(value.name)
     elt
@@ -89,7 +89,55 @@ class IdxSelSpec extends FlatSpec with Matchers {
     mit.read(tuple, 1) shouldBe "4.5"
     mit.read(tuple, "calculated_0").get shouldBe "sixsix"
     val members = mit.members(tuple).toSeq
+
     members.last shouldBe "4.4"
+  }
+
+  it should "read with overrides" in {
+    val mi = MemberIndexer.create[Foo, String](convToStr)
+      .overrideFor(0, {a: Foo => s"'a:${a.a}'"})
+      .overrideFor("calculated", {a: Foo => a.s + "!"})
+    val foo = Foo(1, 0.5, "wat")
+
+    mi.read(foo, 0) shouldBe "'a:1'"
+    mi.read(foo, "calculated").get shouldBe "wat!"
+  }
+
+  it should "apply filters, showing indices" in {
+    val mi = MemberIndexer.create[Foo, String](convToStr)
+      .showing(3, 0)
+    val foo = Foo(1, 2.1, "who")
+
+    mi.members(foo).toSeq shouldBe Seq("whowho", "1")
+    mi.names shouldBe Seq("calculated", "a")
+  }
+
+  it should "apply filters, showing names" in {
+    val mi = MemberIndexer.create[Foo, String](convToStr)
+      .showingNames("calculated", "a")
+    val foo = Foo(1, 2.1, "who")
+
+    mi.members(foo).toSeq shouldBe Seq("whowho", "1")
+    mi.names shouldBe Seq("calculated", "a")
+  }
+
+  it should "apply filters, hiding indices" in {
+    val mi = MemberIndexer.create[Foo, String](convToStr)
+      .hiding(0, 1)
+    val foo = Foo(1, 2.1, "who")
+
+    mi.members(foo).toSeq shouldBe Seq("who", "whowho")
+    mi.names shouldBe Seq("s", "calculated")
+  }
+
+
+  it should "apply filters, hiding names" in {
+    val mi = MemberIndexer.create[Foo, String](convToStr)
+      .hidingNames("a", "b")
+    val foo = Foo(1, 2.1, "who")
+
+    mi.members(foo).toSeq shouldBe Seq("who", "whowho")
+    mi.names shouldBe Seq("s", "calculated")
   }
 
 }
