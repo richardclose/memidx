@@ -1,7 +1,6 @@
+# memidx: address members of class or tuple by index.
 
-#memidx: address members of class or tuple by index.
-
-##Purpose
+## Purpose
 
 `MemberIndexer` provides a typesafe means for reading members of a 
 class or tuple by ordinal index, and converting them to a common type.
@@ -25,7 +24,7 @@ methods.
 The use case for `MemberIndexer` was a requirement to present case
 classes as HTML in a generic way.
 
-##Examples
+## Examples
 
 ```scala
 import org.phasanix.memidx._
@@ -68,7 +67,7 @@ val miName = MemberIndexer.create[Name, String](Conv, Some(cfg))
 
 ```
 
-##Further development
+## Further development
 This library is complete with regard to my current requirements, so
 I will probably not add much to it.
 
