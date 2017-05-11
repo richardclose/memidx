@@ -1,3 +1,4 @@
+
 #memidx: address members of class or tuple by index.
 
 ##Purpose
@@ -15,6 +16,11 @@ the same way as `x`, and `None` is converted to `ConversionsTo.nilValue`.
 A tuple of objects may be indexed the same way: the index values are 
 as they would be if the objects were concatenated. The names of the 
 properties have "_0", "_1" etc appended to them to ensure uniqueness.
+
+An instance of `Config` may be supplied, in order to control which
+methods are enumerated by `members`, and in what order, and to provide
+additional methods, or override the generated mapping of existing
+methods.
 
 The use case for `MemberIndexer` was a requirement to present case
 classes as HTML in a generic way.
@@ -34,7 +40,7 @@ object Conv extends BaseConversionsTo[String]("-") {
 // Usage with case class
 case class Car(kerbWeight: Double, modelName: String, registrationYear: Option[Int])
 
-val mi = MemberIndexer.create[Car, String](Conv)
+val mi = MemberIndexer.create[Car, String](Conv, None)
 
 val cars = Car(2030.12, "Frod", None) :: Car(3220.55, "Ople", Some(2001)) :: Nil
 
@@ -45,10 +51,33 @@ println(carTable.mkString("\n"))
 case class Name(first: String, last: String)
 case class Account(balance: Double, open: Boolean)
 
-val mit = MemberIndexer.createTuple[(Name, Account), String](Conv)
+val mit = MemberIndexer.createTuple[(Name, Account), String](Conv, None)
 
 val record = (Name("Bert", "User"), Account(1001.0, true))
 println(s"account name: ${mit.read(record, 1)} is open: ${mit.read(record, 3)}")
 mit.read(record, "first_0").foreach(firstName => println(s"firstName: $firstName"))
 
+// Using a Config to override and add properties
+
+val cfg = MemberIndexer.config[Name, String].overridingByName (
+  "first"   -> { n => n.first.toLowerCase },
+  "initial" -> { n => n.first.take(1).toUpperCase }
+)
+
+val miName = MemberIndexer.create[Name, String](Conv, Some(cfg))
+
 ```
+
+##Further development
+This library is complete with regard to my current requirements, so
+I will probably not add much to it.
+
+There are a few shortcomings with the ergonomics of the interface -- 
+for example it would be nice to infer the return type from the type
+of `ConversionsTo`, and not to have to supply `None` when a config
+is not needed. The requirement to call the macro implementation
+from a separate compilation unit prevents any wrapping of the macro
+implementation in the library. Similarly, the need for concrete types
+to be available to the macro implementation prevents users of the 
+library from wrapping it in generic code. (I think that a view bound
+calling an implicit macro might solve this one).

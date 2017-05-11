@@ -5,20 +5,20 @@ package org.phasanix.memidx
   * address no-param methods of instances of `A` by index,
   * giving values of type `R`.
   *
-  * @param allNames names of mapped methods/properties
+  * @param generatedNames names of mapped methods/properties
   * @param conversionsTo converter to return type
   * @tparam A type of target values
   * @tparam R return type
   * @tparam C type of converter to return type
   */
-abstract class MemberIndexer[A, R, C <: ConversionsTo[R]](val allNames: Seq[String], val conversionsTo: C) {
+abstract class MemberIndexer[A, R, C <: ConversionsTo[R]]
+  (val generatedNames: Seq[String], val conversionsTo: C, config: Option[Config[A, R]]) {
 
-  private val nameToIndex = allNames.zipWithIndex.toMap
-  private val overrides = Array.ofDim[A => R](allNames.length)
-  private var offsetsShown: Seq[Int] = Seq.tabulate[Int](allNames.length)(i => i)
+  private val(allNames, nameToIndex, overrideMap, offsetsShown) =
+    config.map(_.freeze(generatedNames))
+          .getOrElse(Config.child[A, R](generatedNames))
 
   protected def _read(value: A, index: Int): R
-
 
   /***
     * Convert a member by index
@@ -27,10 +27,10 @@ abstract class MemberIndexer[A, R, C <: ConversionsTo[R]](val allNames: Seq[Stri
     * @return result of conversion.
     */
   def read(value: A, index: Int): R = {
-    if (overrides(index) == null)
-      _read(value, index)
-    else
-      overrides(index)(value)
+    overrideMap
+      .get(index)
+      .map(_.apply(value))
+      .getOrElse(_read(value, index))
   }
 
   /**
@@ -63,75 +63,6 @@ abstract class MemberIndexer[A, R, C <: ConversionsTo[R]](val allNames: Seq[Stri
     * @return
     */
   def names: Seq[String] = offsetsShown.map(allNames)
-
-  /**
-    * Install a custom conversion for the method at the given index
-    * @param index index of method to override the conversion for.
-    * @param fn the overriding conversion
-    * @return self
-    */
-  def overrideFor(index: Int, fn: A => R): this.type = {
-    if (index < 0 || index >= overrides.length)
-      throw new Exception(s"index $index not in range 0:${overrides.length-1}")
-    overrides(index) = fn
-    this
-  }
-
-  /**
-    * Install a custom conversion for the method at the given index
-    * @param name name of method to override the conversion for.
-    * @param fn the overriding conversion
-    * @return self
-    */
-  def overrideFor(name: String, fn: A => R): this.type = {
-    val index = nameToIndex.getOrElse(name, throw new Exception(s"name $name not found"))
-    overrideFor(index, fn)
-    this
-  }
-
-  /**
-    * Restrict the members shown, and specify the order, according to the given
-    * list of indices.
-    * @param indices indices
-    * @return self
-    */
-  def showing(indices: Int*): this.type = {
-    if (indices.exists(os => os < 0 || os >= allNames.length))
-      throw new Exception("an offset is out of range")
-    offsetsShown = indices
-    this
-  }
-
-  /**
-    * Restrict the members shown to those with names in the given list
-    * @param names names
-    * @return self
-    */
-  def showingNames(names: String*): this.type = {
-    offsetsShown = names.map(name => nameToIndex.getOrElse(name, throw new Exception(s"name $name not found")))
-    this
-  }
-
-  /**
-    * Hide members with indices in the given list
-    * @param indices indices
-    * @return
-    */
-  def hiding(indices: Int*): this.type = {
-    offsetsShown = offsetsShown.filterNot(os => indices.contains(os))
-    this
-  }
-
-  /**
-    * Hide members with names in the given list
-    * @param names names
-    * @return
-    */
-  def hidingNames(names: String*): this.type = {
-    offsetsShown = offsetsShown.filterNot(os => names.contains(allNames(os)))
-    this
-  }
-
 }
 
 
@@ -139,19 +70,25 @@ object MemberIndexer {
   import reflect.macros.blackbox
   import language.experimental.macros
 
+  /** create a new Config object */
+  def config[A, R]: Config[A, R] = new Config[A, R]()
+
+  /** create MemberIndex instance */
   def create[A, R]: Ctor[A, R] = new Ctor[A, R]
 
+  /** create MemberIndexer instance for tuple of objects */
   def createTuple[A <: Product, R]: CtorTuple[A, R] = new CtorTuple[A, R]
 
   class Ctor[A, R] {
-    def apply[C <: ConversionsTo[R]](conversionsTo: C): MemberIndexer[A, R, C] = macro apply_impl[A, R, C]
+    def apply[C <: ConversionsTo[R]](conversionsTo: C, config: Option[Config[A, R]]): MemberIndexer[A, R, C] = macro apply_impl[A, R, C]
   }
 
   class CtorTuple[A, R] {
-    def apply[C <: ConversionsTo[R]](conversionsTo: C): MemberIndexer[A, R, C] = macro applyTuple_impl[A, R, C]
+    def apply[C <: ConversionsTo[R]](conversionsTo: C, config: Option[Config[A, R]]): MemberIndexer[A, R, C] = macro applyTuple_impl[A, R, C]
   }
 
-  def applyTuple_impl[A: c.WeakTypeTag, R: c.WeakTypeTag, C: c.WeakTypeTag](c: blackbox.Context)(conversionsTo: c.Expr[C]) = {
+  def applyTuple_impl[A: c.WeakTypeTag, R: c.WeakTypeTag, C: c.WeakTypeTag]
+    (c: blackbox.Context)(conversionsTo: c.Expr[C], config: c.Expr[Option[Config[A, R]]]) = {
 
     import c.universe._
 
@@ -173,7 +110,11 @@ object MemberIndexer {
       (0 +: arr).sliding(2).toArray.zipWithIndex.map(x => (x._2, x._1(0), x._1(1)))
     }
 
-    val mis = types.map(t => create(c)(t, typeR, typeC, conversionsTo))
+    // Supplying None for config, since it applys to enclosing MemberIndexer,
+    // not enclosed MemberIndexers
+    val none = c.Expr(q"None") : c.Expr[Option[Config[A,R]]]
+
+    val mis = types.map(t => create(c)(t, typeR, typeC, none, conversionsTo))
 
     val cases = offsets.map { case(index, from, to) =>
       val mbrName = TermName("_" + (index + 1))
@@ -181,7 +122,7 @@ object MemberIndexer {
     } :+ cq""" _ => throw new Exception ("index " + index + " out of range") """
 
     q"""
-       new org.phasanix.memidx.MemberIndexer[$typeA, $typeR, $typeC]($names, $conversionsTo)  {
+       new org.phasanix.memidx.MemberIndexer[$typeA, $typeR, $typeC]($names, $conversionsTo, $config)  {
           val mis = (..$mis)
 
          def _read(value: $typeA, index: Int): $typeR = {
@@ -193,8 +134,12 @@ object MemberIndexer {
      """
   }
 
-  def apply_impl[A: c.WeakTypeTag, R: c.WeakTypeTag, C: c.WeakTypeTag](c: blackbox.Context)(conversionsTo: c.Expr[C]) =
-    create[C](c)(c.weakTypeOf[A], c.weakTypeOf[R], c.weakTypeOf[C], conversionsTo)
+  def apply_impl[A: c.WeakTypeTag, R: c.WeakTypeTag, C: c.WeakTypeTag]
+    (c: blackbox.Context)(conversionsTo: c.Expr[C], config: c.Expr[Option[Config[A, R]]]) = {
+    import c.universe._
+    val typeA = weakTypeOf[A]
+    create[A, R, C](c)(c.weakTypeOf[A], c.weakTypeOf[R], c.weakTypeOf[C], config, conversionsTo)
+  }
 
   // Select members to map
   private def mappedMembers(c: blackbox.Context)(tpe: c.Type): List[c.universe.MethodSymbol] = {
@@ -213,7 +158,10 @@ object MemberIndexer {
 
       if (methodsToSkip.contains(name) || name.startsWith("copy$default$")) {
         false
-      } else if (returnType.typeArgs.nonEmpty) {
+      } else if (returnType <:< c.universe.typeOf[Option[_]]) {
+        true
+      }else if (returnType.typeArgs.nonEmpty) {
+        // Not attempting to handle container types other than Option
         false
       } else if (isTuple) {
         name.startsWith("_")
@@ -223,7 +171,8 @@ object MemberIndexer {
     }.toList
   }
 
-  private def create[C](c: blackbox.Context)(ta: c.Type, tr: c.Type, tc: c.Type, conversionsTo: c.Expr[C]) = {
+  private def create[A,R,C](c: blackbox.Context)
+                           (ta: c.Type, tr: c.Type, tc: c.Type, config: c.Expr[Option[Config[A,R]]], conversionsTo: c.Expr[C]) = {
 
     import c.universe._
 
@@ -279,7 +228,7 @@ object MemberIndexer {
     val arity = names.length
 
     q"""
-       new org.phasanix.memidx.MemberIndexer[$ta,$tr,$tc](Seq(..$names), $conversionsTo) {
+       new org.phasanix.memidx.MemberIndexer[$ta,$tr,$tc](Seq(..$names), $conversionsTo, $config) {
           val getters: Seq[($ta => $tr)] = Seq(..$snippets)
           protected def _read(value: $ta, index: Int): $tr = {
             if (index < 0 || index > $arity)
@@ -288,6 +237,7 @@ object MemberIndexer {
           }
        }
       """
-
   }
+
+
 }
