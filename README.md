@@ -2,9 +2,11 @@
 
 ## Purpose
 
-`MemberIndexer` provides a typesafe means for reading members of a 
+`MemberIndexer` lets you treat the members of class as elements of an
+array, so that you can render a list of objects as a grid with one 
+object per row. It provides a typesafe means for reading members of a 
 class or tuple by ordinal index, and converting them to a common type.
-The user of `MemberIndexer` controls how types are converting by 
+The user of `MemberIndexer` controls how types are converted by 
 providing a suitable implementation of `ConversionsTo`. Public methods 
 resembling property getters, i.e. those with no arguments and a return
 type other than `Unit`, and which are not compiler-generated members 
