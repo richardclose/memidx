@@ -1,10 +1,10 @@
 name := "memidx"
 
-version := "1.0.2-SNAPSHOT"
+version := "1.0.3-SNAPSHOT"
 
 organization := "org.phasanix"
 
-crossScalaVersions := Seq ("2.11.8", "2.12.2")
+crossScalaVersions := Seq ("2.11.11", "2.12.2")
 
 scalaVersion := "2.12.2"
 

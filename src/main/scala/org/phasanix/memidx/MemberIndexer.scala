@@ -39,6 +39,11 @@ abstract class MemberIndexer[A, R, C <: ConversionsTo[R]]
   def arity: Int = allNames.length
 
   /**
+    * Number of displayed methods/properties
+    */
+  def shownArity: Int = offsetsShown.length
+
+  /**
     * Convert a member by name
     * @param value instance of A of which a member is converted
     * @param name name of member to convert
