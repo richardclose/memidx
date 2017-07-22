@@ -17,6 +17,8 @@ class ConvToXml(doc: Document) extends BaseConversionsTo[Element](doc.createElem
     elt
   }
 
+  // ConversionsTo does not have a method for Symbol; this method
+  // is matched by name.
   def fromSymbol(value: Symbol): Element = {
     val elt = doc.createElement("sym")
     elt.setTextContent(value.name)
@@ -28,22 +30,20 @@ class IdxSelSpec extends FlatSpec with Matchers {
 
   val convToStr = new ConversionsToString()
 
-  def cfg[A]: Config[A, String] = MemberIndexer.config[A, String]
+  private val miFoo = MemberIndexer.create[Foo, String](convToStr)
 
   "MemberIndexer" should "read members of case class" in {
 
-    val mi = MemberIndexer.create[Foo, String](convToStr, None)
-
     val foo = Foo(11, 14.4, "blah")
 
-    mi.read(foo, 0) shouldBe "11"
-    mi.read(foo, 1) shouldBe "14.4"
-    mi.read(foo, 2) shouldBe "blah"
-    mi.read(foo, 3) shouldBe "blahblah"
+    miFoo.read(foo, 0) shouldBe "11"
+    miFoo.read(foo, 1) shouldBe "14.4"
+    miFoo.read(foo, 2) shouldBe "blah"
+    miFoo.read(foo, 3) shouldBe "blahblah"
   }
 
   it should "read members of parameterized case class" in {
-    val mi = MemberIndexer.create[Bar[Boolean, java.util.Date], String](convToStr, None)
+    val mi = MemberIndexer.create[Bar[Boolean, java.util.Date], String](convToStr)
 
     val bar = Bar(false, new java.util.Date(10000L))
 
@@ -52,7 +52,7 @@ class IdxSelSpec extends FlatSpec with Matchers {
 
   it should "read members of tuple" in {
 
-    val mi = MemberIndexer.create[(Double, Long), String](convToStr, None)
+    val mi = MemberIndexer.create[(Double, Long), String](convToStr)
 
     val tup = (2.2, 40L)
 
@@ -60,35 +60,34 @@ class IdxSelSpec extends FlatSpec with Matchers {
     mi.read(tup, 1) shouldBe "40"
   }
 
-  it should "read overloaded of user defined type" in {
+  it should "read arbitrary type, not defined in ConversionsTo" in {
     val doc = javax.xml.parsers.DocumentBuilderFactory.newInstance().newDocumentBuilder().newDocument()
-    val mi = MemberIndexer.create[Bar[Double, Symbol], Element](new ConvToXml(doc), None)
+    val mi = MemberIndexer.create[Bar[Double, Symbol], Element](new ConvToXml(doc))
     val bar = Bar(3.3, 'Thing)
 
     mi.read(bar, 1).getTextContent shouldBe "Thing"
   }
 
   it should "handle Option members" in {
-    val mi = MemberIndexer.create[Bar[Option[Boolean], Option[String]], String](convToStr, None)
+    val mi = MemberIndexer.create[Bar[Option[Boolean], Option[String]], String](convToStr)
     val bar = Bar(None: Option[Boolean], Option("wibble"))
     mi.read(bar, 0) shouldBe convToStr.nilValue
     mi.read(bar, 1) shouldBe "wibble"
   }
 
   it should "read members by name" in {
-    val mi = MemberIndexer.create[Foo, String](convToStr, None)
 
     val foo = Foo(11, 14.4, "blah")
 
-    mi.read(foo, "s").get shouldBe "blah"
-    mi.read(foo, "wibble").isEmpty shouldBe true
-    mi.read(foo, "calculated").get shouldBe "blahblah"
+    miFoo.read(foo, "s").get shouldBe "blah"
+    miFoo.read(foo, "wibble").isEmpty shouldBe true
+    miFoo.read(foo, "calculated").get shouldBe "blahblah"
   }
 
-  it should "read from set" in {
+  it should "read from tuple set" in {
     type A = (Foo, Bar[Boolean, String], Baz)
     val tuple: A = (Foo(3, 4.5, "six"), Bar(true, "yes"), Baz(false, 4.4f))
-    var mit = MemberIndexer.createTuple[(Foo, Bar[Boolean, String], Baz), String](convToStr, None)
+    var mit = MemberIndexer.createTuple[(Foo, Bar[Boolean, String], Baz), String](convToStr)
 
     mit.read(tuple, 1) shouldBe "4.5"
     mit.read(tuple, "calculated_0").get shouldBe "sixsix"
@@ -97,62 +96,79 @@ class IdxSelSpec extends FlatSpec with Matchers {
     members.last shouldBe "4.4"
   }
 
-  it should "read with overrides" in {
-    val config = cfg[Foo]
-      .overriding      (0 -> { a => s"'a:${a.a}'"})
-      .overridingByName("calculated" -> { a => a.s + "!" } )
-    val mi = MemberIndexer.create[Foo, String](convToStr, Some(config))
+  "MemberIndexerView" should "read with overrides" in {
+    val miv = miFoo.view
+      .overriding(0 -> { a => s"a:'${a.a}'"})
+      .overridingByName("calculated" -> { a => a.s + "!"})
+      .build()
+
     val foo = Foo(1, 0.5, "wat")
 
-    mi.read(foo, 0) shouldBe "'a:1'"
-    mi.read(foo, "calculated").get shouldBe "wat!"
+    miv.read(foo, 0) shouldBe "a:'1'"
+    miv.read(foo, "calculated").get shouldBe "wat!"
   }
 
   it should "apply filters, showing indices" in {
-    val config = cfg[Foo]
+    val miv = miFoo.view
       .showing(3, 0)
-    val mi = MemberIndexer.create[Foo, String](convToStr, Some(config))
+      .build()
+
     val foo = Foo(1, 2.1, "who")
 
-    mi.members(foo).toSeq shouldBe Seq("whowho", "1")
-    mi.names shouldBe Seq("calculated", "a")
+    miv.members(foo).toSeq shouldBe Seq("whowho", "1")
+    miv.names shouldBe Seq("calculated", "a")
   }
 
   it should "apply filters, showing names" in {
-    val config = cfg[Foo].showingNames("calculated", "a")
-    val mi = MemberIndexer.create[Foo, String](convToStr, Some(config))
+    val miv = miFoo.view
+      .showingNames("calculated", "a")
+      .build()
+
     val foo = Foo(1, 2.1, "who")
 
-    mi.members(foo).toSeq shouldBe Seq("whowho", "1")
-    mi.names shouldBe Seq("calculated", "a")
+    miv.members(foo).toSeq shouldBe Seq("whowho", "1")
+    miv.names shouldBe Seq("calculated", "a")
   }
 
   it should "apply filters, hiding indices" in {
-    val config = cfg[Foo].hiding(0, 1)
 
-    val mi = MemberIndexer.create[Foo, String](convToStr, Some(config))
+    val miv = miFoo.view
+      .hiding(0, 1)
+      .build()
+
     val foo = Foo(1, 2.1, "who")
 
-    mi.members(foo).toSeq shouldBe Seq("who", "whowho")
-    mi.names shouldBe Seq("s", "calculated")
+    miv.members(foo).toSeq shouldBe Seq("who", "whowho")
+    miv.names shouldBe Seq("s", "calculated")
   }
-
 
   it should "apply filters, hiding names" in {
-    val config = cfg[Foo].hidingByName("a", "b")
-    val mi = MemberIndexer.create[Foo, String](convToStr, Some(config))
+    val miv = miFoo.view
+      .hidingByName("a", "b")
+      .build()
+
     val foo = Foo(1, 2.1, "who")
 
-    mi.members(foo).toSeq shouldBe Seq("who", "whowho")
-    mi.names shouldBe Seq("s", "calculated")
+    miv.members(foo).toSeq shouldBe Seq("who", "whowho")
+    miv.names shouldBe Seq("s", "calculated")
   }
 
-  it should "add extra properties via config" in {
-    val config = cfg[Foo].overridingByName("extra" -> {a => "wibble:" + a.s})
-    val mi = MemberIndexer.create[Foo, String](convToStr, Some(config))
+  it should "add extra properties via view" in {
+    val miv = miFoo.view
+      .overridingByName("extra" -> {a => "wibble:" + a.s})
+      .build()
+
     val foo = Foo(3, 4.5, "yes")
 
-    mi.read(foo, "extra").get shouldBe "wibble:yes"
+    miv.read(foo, "extra").get shouldBe "wibble:yes"
+  }
+
+  it should "set a display name" in {
+    val miv = miFoo.view
+      .overridingByDisplayName(("calculated" -> "WIBBLE") -> { a => a.calculated()})
+      .build()
+
+    miv.displayNames(3) shouldBe "WIBBLE"
   }
 
 }

@@ -5,78 +5,74 @@ package org.phasanix.memidx
   * address no-param methods of instances of `A` by index,
   * giving values of type `R`.
   *
-  * @param generatedNames names of mapped methods/properties
-  * @param conversionsTo converter to return type
+  * @tparam A type of target values
+  * @tparam R return type
+  */
+trait MemberIndexer[A, R] {
+
+  /** names of mapped members */
+  val names: Seq[String]
+
+  /** read the indexth member of value, giving an instance of R */
+  def read(value: A, index: Int): R
+
+  /** read the member of value which is named 'name', giving an instance of R */
+  def read(value: A, name: String): Option[R]
+
+  /** iterator over members, producing instances of R */
+  def members(value: A): Iterator[R]
+
+  /** number of mapped members */
+  def arity: Int
+
+  /** create builder for a MemberIndexerView */
+  def view: MemberIndexerView.Builder[A, R]
+}
+
+/**
+  * Base class of macro-generated implementation.
+  * @param names names of mapped members
+  * @param conversionsTo object with conversion methods to type R
   * @tparam A type of target values
   * @tparam R return type
   * @tparam C type of converter to return type
   */
-abstract class MemberIndexer[A, R, C <: ConversionsTo[R]]
-  (val generatedNames: Seq[String], val conversionsTo: C, config: Option[Config[A, R]]) {
+abstract class MemberIndexerImpl[A, R, C <: ConversionsTo[R]]
+  (val names: Seq[String], val conversionsTo: C) extends MemberIndexer[A, R] {
 
-  private val(allNames, nameToIndex, overrideMap, offsetsShown) =
-    config.map(_.freeze(generatedNames))
-          .getOrElse(Config.child[A, R](generatedNames))
+  private val namesToIndex = names.zipWithIndex.toMap
 
-  protected def _read(value: A, index: Int): R
+  /** Read the indexth member of value */
+  def read(value: A, index: Int): R
 
-  /***
-    * Convert a member by index
-    * @param value instance of A of which a member is converted
-    * @param index index of member to convert
-    * @return result of conversion.
-    */
-  def read(value: A, index: Int): R = {
-    overrideMap
-      .get(index)
-      .map(_.apply(value))
-      .getOrElse(_read(value, index))
-  }
-
-  /**
-    * Number of mapped methods/properties
-    */
-  def arity: Int = allNames.length
-
-  /**
-    * Number of displayed methods/properties
-    */
-  def shownArity: Int = offsetsShown.length
-
-  /**
-    * Convert a member by name
-    * @param value instance of A of which a member is converted
-    * @param name name of member to convert
-    * @return result of conversion.
-    */
-  def read(value: A, name: String): Option[R] = nameToIndex.get(name).map(read(value, _))
+  /** Read member by name */
+  def read(value: A, name: String): Option[R] =
+    namesToIndex.get(name).map(read(value, _))
 
   /** member iterator */
   def members(value: A): Iterator[R] = new Iterator[R] {
     var pos: Int = 0
-    def hasNext: Boolean = pos < offsetsShown.length
+    def hasNext: Boolean = pos < names.length
 
     def next(): R = {
-      val ret = read(value, offsetsShown(pos))
+      val ret = read(value, pos)
       pos += 1
       ret
     }
   }
 
-  /**
-    * Names of mapped properties that are shown
-    * @return
-    */
-  def names: Seq[String] = offsetsShown.map(allNames)
+  /** Number of mapped members */
+  def arity: Int = names.length
+
+  /** Create view builder */
+  def view: MemberIndexerView.Builder[A, R] =
+    new MemberIndexerView.Builder[A, R](this)
 }
 
 
 object MemberIndexer {
   import reflect.macros.blackbox
   import language.experimental.macros
-
-  /** create a new Config object */
-  def config[A, R]: Config[A, R] = new Config[A, R]()
 
   /** create MemberIndex instance */
   def create[A, R]: Ctor[A, R] = new Ctor[A, R]
@@ -85,15 +81,15 @@ object MemberIndexer {
   def createTuple[A <: Product, R]: CtorTuple[A, R] = new CtorTuple[A, R]
 
   class Ctor[A, R] {
-    def apply[C <: ConversionsTo[R]](conversionsTo: C, config: Option[Config[A, R]]): MemberIndexer[A, R, C] = macro apply_impl[A, R, C]
+    def apply[C <: ConversionsTo[R]](conversionsTo: C): MemberIndexerImpl[A, R, C] = macro apply_impl[A, R, C]
   }
 
   class CtorTuple[A, R] {
-    def apply[C <: ConversionsTo[R]](conversionsTo: C, config: Option[Config[A, R]]): MemberIndexer[A, R, C] = macro applyTuple_impl[A, R, C]
+    def apply[C <: ConversionsTo[R]](conversionsTo: C): MemberIndexerImpl[A, R, C] = macro applyTuple_impl[A, R, C]
   }
 
   def applyTuple_impl[A: c.WeakTypeTag, R: c.WeakTypeTag, C: c.WeakTypeTag]
-    (c: blackbox.Context)(conversionsTo: c.Expr[C], config: c.Expr[Option[Config[A, R]]]) = {
+    (c: blackbox.Context)(conversionsTo: c.Expr[C]) = {
 
     import c.universe._
 
@@ -115,11 +111,7 @@ object MemberIndexer {
       (0 +: arr).sliding(2).toArray.zipWithIndex.map(x => (x._2, x._1(0), x._1(1)))
     }
 
-    // Supplying None for config, since it applys to enclosing MemberIndexer,
-    // not enclosed MemberIndexers
-    val none = c.Expr(q"None") : c.Expr[Option[Config[A,R]]]
-
-    val mis = types.map(t => create(c)(t, typeR, typeC, none, conversionsTo))
+    val mis = types.map(t => create(c)(t, typeR, typeC, conversionsTo))
 
     val cases = offsets.map { case(index, from, to) =>
       val mbrName = TermName("_" + (index + 1))
@@ -127,10 +119,10 @@ object MemberIndexer {
     } :+ cq""" _ => throw new Exception ("index " + index + " out of range") """
 
     q"""
-       new org.phasanix.memidx.MemberIndexer[$typeA, $typeR, $typeC]($names, $conversionsTo, $config)  {
+       new org.phasanix.memidx.MemberIndexerImpl[$typeA, $typeR, $typeC]($names, $conversionsTo)  {
           val mis = (..$mis)
 
-         def _read(value: $typeA, index: Int): $typeR = {
+         def read(value: $typeA, index: Int): $typeR = {
            index match {
              case ..$cases
            }
@@ -140,10 +132,10 @@ object MemberIndexer {
   }
 
   def apply_impl[A: c.WeakTypeTag, R: c.WeakTypeTag, C: c.WeakTypeTag]
-    (c: blackbox.Context)(conversionsTo: c.Expr[C], config: c.Expr[Option[Config[A, R]]]) = {
+    (c: blackbox.Context)(conversionsTo: c.Expr[C]) = {
     import c.universe._
     val typeA = weakTypeOf[A]
-    create[A, R, C](c)(c.weakTypeOf[A], c.weakTypeOf[R], c.weakTypeOf[C], config, conversionsTo)
+    create[A, R, C](c)(c.weakTypeOf[A], c.weakTypeOf[R], c.weakTypeOf[C], conversionsTo)
   }
 
   // Select members to map
@@ -176,8 +168,9 @@ object MemberIndexer {
     }.toList
   }
 
+  // Create a MemberIndexerImpl, either for direct use by create_impl, or as part of a tuple
   private def create[A,R,C](c: blackbox.Context)
-                           (ta: c.Type, tr: c.Type, tc: c.Type, config: c.Expr[Option[Config[A,R]]], conversionsTo: c.Expr[C]) = {
+                           (ta: c.Type, tr: c.Type, tc: c.Type, conversionsTo: c.Expr[C]) = {
 
     import c.universe._
 
@@ -233,9 +226,9 @@ object MemberIndexer {
     val arity = names.length
 
     q"""
-       new org.phasanix.memidx.MemberIndexer[$ta,$tr,$tc](Seq(..$names), $conversionsTo, $config) {
+       new org.phasanix.memidx.MemberIndexerImpl[$ta,$tr,$tc](Seq(..$names), $conversionsTo) {
           val getters: Seq[($ta => $tr)] = Seq(..$snippets)
-          protected def _read(value: $ta, index: Int): $tr = {
+          def read(value: $ta, index: Int): $tr = {
             if (index < 0 || index > $arity)
               throw new Exception("index " + index + " out of range (" + arity + ")")
             getters(index)(value)

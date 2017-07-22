@@ -31,17 +31,22 @@ classes as HTML in a generic way.
 ```scala
 import org.phasanix.memidx._
 
+case class Label(name: String)
 
 object Conv extends BaseConversionsTo[String]("-") {
   private val fmt = new java.text.DecimalFormat("#,##0.00")
   override def fromString(value: String): String = "\"" + value + "\""
   override def fromDouble(value: Double): String = fmt.format(value)
+ 
+  // Conversion from arbitrary type, method name must match
+  // type name.
+  def fromLabel(value: Label): String = s"{$value}"
 }
 
 // Usage with case class
 case class Car(kerbWeight: Double, modelName: String, registrationYear: Option[Int])
 
-val mi = MemberIndexer.create[Car, String](Conv, None)
+val mi = MemberIndexer.create[Car, String](Conv)
 
 val cars = Car(2030.12, "Frod", None) :: Car(3220.55, "Ople", Some(2001)) :: Nil
 
@@ -52,20 +57,20 @@ println(carTable.mkString("\n"))
 case class Name(first: String, last: String)
 case class Account(balance: Double, open: Boolean)
 
-val mit = MemberIndexer.createTuple[(Name, Account), String](Conv, None)
+val mit = MemberIndexer.createTuple[(Name, Account), String](Conv)
 
 val record = (Name("Bert", "User"), Account(1001.0, true))
 println(s"account name: ${mit.read(record, 1)} is open: ${mit.read(record, 3)}")
 mit.read(record, "first_0").foreach(firstName => println(s"firstName: $firstName"))
 
-// Using a Config to override and add properties
-
-val cfg = MemberIndexer.config[Name, String].overridingByName (
-  "first"   -> { n => n.first.toLowerCase },
-  "initial" -> { n => n.first.take(1).toUpperCase }
-)
-
-val miName = MemberIndexer.create[Name, String](Conv, Some(cfg))
+// Using a MemberIndexerView to override and add properties
+val miName = MemberIndexer.create[Name, String](Conv).view
+  .overridingByName (
+    "first"   -> { n => n.first.toLowerCase },
+    "initial" -> { n => n.first.take(1).toUpperCase }
+  )
+  .overridingByDisplayName(("last", "Surname") -> { n => n.last.toUpperCase } )
+  .build()
 
 ```
 
@@ -75,10 +80,9 @@ I will probably not add much to it.
 
 There are a few shortcomings with the ergonomics of the interface -- 
 for example it would be nice to infer the return type from the type
-of `ConversionsTo`, and not to have to supply `None` when a config
-is not needed. The requirement to call the macro implementation
+of `ConversionsTo`. The requirement to call the macro implementation
 from a separate compilation unit prevents any wrapping of the macro
 implementation in the library. Similarly, the need for concrete types
 to be available to the macro implementation prevents users of the 
-library from wrapping it in generic code. (I think that a view bound
+library from wrapping it in generic code. (Perhaps a view bound
 calling an implicit macro might solve this one).
