@@ -11,17 +11,18 @@ providing a suitable implementation of `ConversionsTo`. Public methods
 resembling property getters, i.e. those with no arguments and a return
 type other than `Unit`, and which are not compiler-generated members 
 of case classes or tuples such as `productIterator`, are mapped. There
-is special-case handing of Options, such that `Some(x)` is converted
+is special-case handing of `Options`, such that `Some(x)` is converted
 the same way as `x`, and `None` is converted to `ConversionsTo.nilValue`.
 
 A tuple of objects may be indexed the same way: the index values are 
 as they would be if the objects were concatenated. The names of the 
 properties have "_0", "_1" etc appended to them to ensure uniqueness.
 
-An instance of `Config` may be supplied, in order to control which
-methods are enumerated by `members`, and in what order, and to provide
-additional methods, or override the generated mapping of existing
-methods.
+Control of which members are shown, in what order, overriding of the
+conversion of selected members, addition of members, and association
+of descriptive names for display, is provided by `MemberIndexerView`.
+These are created by calling `MemberIndexer.view`, which returns a 
+builder object that creates a `MemberIndexerView`.
 
 The use case for `MemberIndexer` was a requirement to present case
 classes as HTML in a generic way.
@@ -84,5 +85,5 @@ of `ConversionsTo`. The requirement to call the macro implementation
 from a separate compilation unit prevents any wrapping of the macro
 implementation in the library. Similarly, the need for concrete types
 to be available to the macro implementation prevents users of the 
-library from wrapping it in generic code. (Perhaps a view bound
+library from wrapping it in generic code. (I think that a view bound
 calling an implicit macro might solve this one).
