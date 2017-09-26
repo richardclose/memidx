@@ -4,9 +4,9 @@ version := "1.0.4-SNAPSHOT"
 
 organization := "org.phasanix"
 
-crossScalaVersions := Seq ("2.11.11", "2.12.2")
+crossScalaVersions := Seq ("2.11.11", "2.12.3")
 
-scalaVersion := "2.12.2"
+scalaVersion := "2.12.3"
 
 // Change this to another test framework if you prefer
 libraryDependencies ++= Seq(
