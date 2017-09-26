@@ -2,30 +2,50 @@
 
 ## Purpose
 
-`MemberIndexer` lets you treat the members of class as elements of an
-array, so that you can render a list of objects as a grid with one 
-object per row. It provides a typesafe means for reading members of a 
-class or tuple by ordinal index, and converting them to a common type.
-The user of `MemberIndexer` controls how types are converted by 
-providing a suitable implementation of `ConversionsTo`. Public methods 
-resembling property getters, i.e. those with no arguments and a return
-type other than `Unit`, and which are not compiler-generated members 
-of case classes or tuples such as `productIterator`, are mapped. There
-is special-case handing of `Options`, such that `Some(x)` is converted
-the same way as `x`, and `None` is converted to `ConversionsTo.nilValue`.
+Given an object, you want to iterate over its members, or read 
+them by index or by name, while converting them to a common type. 
+You might be:
 
-A tuple of objects may be indexed the same way: the index values are 
-as they would be if the objects were concatenated. The names of the 
-properties have "_0", "_1" etc appended to them to ensure uniqueness.
+- Rendering a list of objects as an HTML table (my original use case)
+- Visually inspecting a single object
+- Computing the total of the numeric members (a bit contrived, this one)
 
-Control of which members are shown, in what order, overriding of the
-conversion of selected members, addition of members, and association
-of descriptive names for display, is provided by `MemberIndexerView`.
-These are created by calling `MemberIndexer.view`, which returns a 
-builder object that creates a `MemberIndexerView`.
+You want to do this with the minimum of boilerplate, and as you're 
+using Scala, you want to be efficient and typesafe. This library 
+addresses the requirement with a macro implementation that maps indices
+directly to members.
 
-The use case for `MemberIndexer` was a requirement to present case
-classes as HTML in a generic way.
+## Usage
+
+To use `MemberIndexer`, start by providing a suitable implementation
+of `ConversionsTo[A]`. Usually, you will want to extend 
+`BaseConversionsTo[A]`, which has default implementations that return
+`nilValue`, so that you only need to implement the conversions that 
+you are interested in. Type `A` might be `String`, or
+`org.w3c.xml.Element`, or `scalatags.Text.all.Tag`, or whatever fits 
+your use case. If this library is worth using, you'll probably have
+one implementation of `ConversionsTo[A]` which you use for all types.
+(You can override the conversion for specific members with 
+`MemberIndexerView`). If your class has a member of a type not 
+included in `ConversionsTo` (say, `Foo`), your implementation must have
+a method (say, `def fromFoo(value: Foo): A`).
+
+`MemberIndexer` will map any method that looks like a property reader --
+the criterion is: any public method with no arguments, with a return
+type other than `Unit`, that is not a compiler-generated member of 
+case classes or tuples (e.g. `productIterator`). There is special-case 
+handling of `Option`, such that `Some(x)` is converted the same way as
+`x`, and `None` is converted to `ConversionsTo.nilValue`.
+
+If type `A` is a tuple of objects, the index values are as they would 
+be if the objects were concatenated. The names of the  properties have 
+"_0", "_1" etc appended to them to ensure uniqueness.
+
+`MemberIndexerView` provides control of which members are shown, and in 
+what order. It also provides conversion of selected members, addition 
+of members, and association of descriptive names for display.
+`MemberIndexer.view` returns a builder object that creates a
+`MemberIndexerView`.
 
 ## Examples
 
