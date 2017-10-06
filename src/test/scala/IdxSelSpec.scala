@@ -171,4 +171,17 @@ class IdxSelSpec extends FlatSpec with Matchers {
     miv.displayNames(3) shouldBe "WIBBLE"
   }
 
+  it should "remap names shown" in {
+    val miv = miFoo.view
+      .showingDisplayNames("a" -> "Apple", "b" -> "Banana")
+      .build()
+
+    val miv1 = miv.selecting("b", "s")
+
+    val foo = Foo(11, 12.0, "why")
+
+    miv1.names shouldBe Seq("b", "s")
+    miv1.read(foo, 1) shouldBe "why"
+  }
+
 }

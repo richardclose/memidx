@@ -27,6 +27,9 @@ trait MemberIndexer[A, R] {
 
   /** create builder for a MemberIndexerView */
   def view: MemberIndexerView.Builder[A, R]
+
+  /** Nil value */
+  def nil: R
 }
 
 /**
@@ -67,6 +70,9 @@ abstract class MemberIndexerImpl[A, R, C <: ConversionsTo[R]]
   /** Create view builder */
   def view: MemberIndexerView.Builder[A, R] =
     new MemberIndexerView.Builder[A, R](this)
+
+  /** Nil value */
+  def nil: R = conversionsTo.nilValue
 }
 
 

@@ -5,27 +5,32 @@ package org.phasanix.memidx
   * enable selection, ordering, overriding and association of
   * display names for the members of the wrapped MemberIndexer.
   */
-class MemberIndexerView[A, R](mi: MemberIndexer[A, R], builder: MemberIndexerView.Builder[A, R])
+class MemberIndexerView[A, R](
+                               mi: MemberIndexer[A, R],
+                               allNames: Seq[String],
+                               nameToIndex: Map[String, Int],
+                               overrideMap: Map[Int, (A) => R],
+                               offsetsShown: Seq[Int],
+                               allDisplayNames: Seq[String])
   extends MemberIndexer[A, R] {
-
-  private val(
-    allNames,
-    nameToIndex,
-    overrideMap,
-    offsetsShown,
-    displayNames_) = builder.freeze(mi.names)
 
   /***
     * Convert a member by index
     * @param value instance of A of which a member is converted
-    * @param index index of member to convert
+    * @param index index (after mapping) of member to convert
     * @return result of conversion.
     */
   def read(value: A, index: Int): R = {
     overrideMap
       .get(index)
       .map(_.apply(value))
-      .getOrElse(mi.read(value, index))
+      .getOrElse {
+        if (index < 0 || index >= offsetsShown.length) {
+          mi.nil
+        } else {
+          mi.read(value, offsetsShown(index))
+        }
+      }
   }
 
   /**
@@ -48,7 +53,7 @@ class MemberIndexerView[A, R](mi: MemberIndexer[A, R], builder: MemberIndexerVie
     def hasNext: Boolean = pos < offsetsShown.length
 
     def next(): R = {
-      val ret = read(value, offsetsShown(pos))
+      val ret = read(value, pos)
       pos += 1
       ret
     }
@@ -62,10 +67,30 @@ class MemberIndexerView[A, R](mi: MemberIndexer[A, R], builder: MemberIndexerVie
   /**
     * Display names of mapped properties that are shown
     */
-  def displayNames: Seq[String] = offsetsShown.map(displayNames_)
+  def displayNames: Seq[String] = offsetsShown.map(allDisplayNames)
 
+  /**
+    * Seq[name, description] for all names
+    * @return
+    */
+  def allNamesAndDescriptions: Seq[(String, String)] = allNames.zip(allDisplayNames)
+
+  /**
+    * Create copy of this, with a list of names to show, in the order given.
+    */
+  def selecting(names: String*): MemberIndexerView[A, R] = {
+    val newOffsetsShown = names.flatMap(nameToIndex.get)
+    new MemberIndexerView[A,R](mi, allNames, nameToIndex, overrideMap, newOffsetsShown, allDisplayNames)
+  }
+
+  /**
+    Create a view builder for this.
+   */
   def view: MemberIndexerView.Builder[A, R] =
     new MemberIndexerView.Builder(this)
+
+  /** Nil value */
+  def nil: R = mi.nil
 }
 
 object MemberIndexerView {
@@ -85,8 +110,10 @@ object MemberIndexerView {
       * create the MemberIndexerView instance after calling
       * the configuration methods.
       */
-    def build(): MemberIndexerView[A, R] =
-      new MemberIndexerView[A, R](mi, this)
+    def build(): MemberIndexerView[A, R] = {
+      val (allNames, nameToIndex, overrideMap, offsetsShown, allDisplayNames) = this.freeze(mi.names)
+      new MemberIndexerView[A, R](mi, allNames, nameToIndex, overrideMap, offsetsShown, allDisplayNames)
+    }
 
     /**
       * specify by name the members to show, and the order they will
