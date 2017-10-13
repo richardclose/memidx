@@ -21,14 +21,18 @@ class MemberIndexerView[A, R](
     * @return result of conversion.
     */
   def read(value: A, index: Int): R = {
+    val mappedIdx = if (index < 0 || index >= offsetsShown.length)
+      -1
+    else
+      offsetsShown(index)
     overrideMap
-      .get(index)
+      .get(mappedIdx)
       .map(_.apply(value))
       .getOrElse {
-        if (index < 0 || index >= offsetsShown.length) {
+        if (mappedIdx == -1) {
           mi.nil
         } else {
-          mi.read(value, offsetsShown(index))
+          mi.read(value, mappedIdx)
         }
       }
   }
