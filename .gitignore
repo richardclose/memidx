@@ -8,5 +8,6 @@ tmp
 dist
 .target
 .idea
+.bsp
 *.class
 *.swp
