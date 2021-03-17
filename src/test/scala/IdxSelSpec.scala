@@ -1,6 +1,7 @@
 import org.phasanix.memidx._
-import org.scalatest._
 import org.w3c.dom.{Document, Element}
+import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.should.Matchers
 
 case class Foo(a: Int, b: Double, s: String) {
   def calculated(): String = s + s
@@ -26,7 +27,7 @@ class ConvToXml(doc: Document) extends BaseConversionsTo[Element](doc.createElem
   }
 }
 
-class IdxSelSpec extends FlatSpec with Matchers {
+class IdxSelSpec extends AnyFlatSpec with Matchers {
 
   val convToStr = new ConversionsToString()
 
@@ -63,7 +64,7 @@ class IdxSelSpec extends FlatSpec with Matchers {
   it should "read arbitrary type, not defined in ConversionsTo" in {
     val doc = javax.xml.parsers.DocumentBuilderFactory.newInstance().newDocumentBuilder().newDocument()
     val mi = MemberIndexer.create[Bar[Double, Symbol], Element](new ConvToXml(doc))
-    val bar = Bar(3.3, 'Thing)
+    val bar = Bar(3.3, Symbol("Thing"))
 
     mi.read(bar, 1).getTextContent shouldBe "Thing"
   }
@@ -87,7 +88,7 @@ class IdxSelSpec extends FlatSpec with Matchers {
   it should "read from tuple set" in {
     type A = (Foo, Bar[Boolean, String], Baz)
     val tuple: A = (Foo(3, 4.5, "six"), Bar(true, "yes"), Baz(false, 4.4f))
-    var mit = MemberIndexer.createTuple[(Foo, Bar[Boolean, String], Baz), String](convToStr)
+    val mit = MemberIndexer.createTuple[(Foo, Bar[Boolean, String], Baz), String](convToStr)
 
     mit.read(tuple, 1) shouldBe "4.5"
     mit.read(tuple, "calculated_0").get shouldBe "sixsix"
